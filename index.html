@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Album Cover Screensaver</title>
+<style>
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+
+  html, body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: #000;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+
+  #grid img {
+    -webkit-touch-callout: none;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  #grid {
+    display: grid;
+    position: absolute;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    overflow: hidden;
+  }
+
+  .cell {
+    position: relative;
+    perspective: 600px;
+    overflow: hidden;
+  }
+
+  .card {
+    width: 100%;
+    height: 100%;
+    position: relative;
+    transform-style: preserve-3d;
+    transition: transform 0.8s ease-in-out;
+  }
+
+  .card.flipping {
+    transform: rotateY(180deg);
+  }
+
+  .card-face {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    backface-visibility: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #000;
+  }
+
+  .card-face img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+
+  .card-back {
+    transform: rotateY(180deg);
+  }
+
+  #overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    background: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    align-items: center;
+    justify-content: center;
+  }
+
+  #overlay.open {
+    display: flex;
+  }
+
+  #modal {
+    background: #1c1c1e;
+    color: #f5f5f7;
+    border-radius: 14px;
+    padding: 28px 32px;
+    width: 340px;
+    max-width: 90vw;
+    box-shadow: 0 8px 40px rgba(0, 0, 0, 0.6);
+  }
+
+  #modal h2 {
+    font-size: 20px;
+    font-weight: 600;
+    margin-bottom: 24px;
+    text-align: center;
+  }
+
+  .setting {
+    margin-bottom: 20px;
+  }
+
+  .setting label {
+    display: block;
+    font-size: 13px;
+    color: #98989f;
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .setting select,
+  .setting input[type="number"] {
+    width: 100%;
+    padding: 10px 12px;
+    font-size: 16px;
+    color: #f5f5f7;
+    background: #2c2c2e;
+    border: 1px solid #3a3a3c;
+    border-radius: 8px;
+    appearance: none;
+    -webkit-appearance: none;
+    outline: none;
+  }
+
+  .setting select {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%2398989f' stroke-width='1.5' fill='none'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    padding-right: 32px;
+  }
+
+  .setting select:focus,
+  .setting input[type="number"]:focus {
+    border-color: #0a84ff;
+  }
+
+  .setting input[type="number"] {
+    -moz-appearance: textfield;
+  }
+
+  .modal-hint {
+    text-align: center;
+    font-size: 12px;
+    color: #636366;
+    margin-top: 16px;
+  }
+
+  .modal-hint kbd {
+    display: inline-block;
+    background: #3a3a3c;
+    color: #98989f;
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-family: inherit;
+    font-size: 12px;
+  }
+</style>
+</head>
+<body>
+<div id="grid"></div>
+
+<div id="overlay">
+  <div id="modal">
+    <h2>Settings</h2>
+    <div class="setting">
+      <label for="feedSelect">Feed</label>
+      <select id="feedSelect">
+        <option value="albums">Apple Top Albums</option>
+        <option value="songs">Apple Top Songs</option>
+      </select>
+      <p id="feedLoading" style="display:none; color:#636366; font-size:12px; margin-top:6px; text-align:center;">Loading…</p>
+    </div>
+    <div class="setting">
+      <label for="intervalInput">Flip interval (seconds)</label>
+      <input type="number" id="intervalInput" min="1" max="10" step="1" value="3">
+    </div>
+    <p class="modal-hint">Press <kbd>?</kbd> or <kbd>Esc</kbd> to close · Long-press grid on mobile</p>
+  </div>
+</div>
+
+<script>
+(function () {
+  var FEEDS = {
+    albums: 'https://itunes.apple.com/us/rss/topalbums/limit=100/json',
+    songs: 'https://itunes.apple.com/us/rss/topsongs/limit=100/json'
+  };
+  var LOCAL_CATEGORIES = {};
+  var MIN_COLS = 3;
+
+  var currentFeed = localStorage.getItem('ss_feed') || 'albums';
+  var flipInterval = parseInt(localStorage.getItem('ss_interval'), 10) || 3;
+
+  var albums = [];
+  var gridAlbumIndices = [];
+  var cols = MIN_COLS;
+  var rows = 3;
+  var total = cols * rows;
+  var lastFlippedIndex = -1;
+  var flipTimer = null;
+
+  var feedSelect = document.getElementById('feedSelect');
+  var intervalInput = document.getElementById('intervalInput');
+  var overlay = document.getElementById('overlay');
+
+  feedSelect.value = currentFeed;
+  intervalInput.value = flipInterval;
+
+  function calcLayout() {
+    cols = Math.max(MIN_COLS, Math.ceil(window.innerWidth / 250));
+    var tileSize = window.innerWidth / cols;
+    rows = Math.ceil(window.innerHeight / tileSize) + 1;
+    total = cols * rows;
+  }
+
+  function getHighResUrl(entry) {
+    var images = entry['im:image'];
+    var largest = images[images.length - 1];
+    return largest.label.replace(/\d+x\d+bb/, '600x600bb');
+  }
+
+  function randomIndex(exclude) {
+    if (exclude.size >= albums.length) {
+      return Math.floor(Math.random() * albums.length);
+    }
+    var idx;
+    do {
+      idx = Math.floor(Math.random() * albums.length);
+    } while (exclude.has(idx));
+    return idx;
+  }
+
+  function pickUniqueIndices(count) {
+    var used = new Set();
+    var result = [];
+    for (var i = 0; i < count; i++) {
+      var idx = randomIndex(used);
+      used.add(idx);
+      result.push(idx);
+    }
+    return result;
+  }
+
+  function createImg(albumIndex) {
+    var img = document.createElement('img');
+    img.src = albums[albumIndex].url;
+    img.alt = albums[albumIndex].name;
+    img.loading = 'eager';
+    return img;
+  }
+
+  function sizeGrid() {
+    var grid = document.getElementById('grid');
+    var tile = Math.ceil(window.innerWidth / cols);
+    grid.style.width = (tile * cols) + 'px';
+    grid.style.height = (tile * rows) + 'px';
+    grid.style.gridTemplateColumns = 'repeat(' + cols + ', 1fr)';
+    grid.style.gridTemplateRows = 'repeat(' + rows + ', 1fr)';
+  }
+
+  function createCell(i) {
+    var cell = document.createElement('div');
+    cell.className = 'cell';
+    var card = document.createElement('div');
+    card.className = 'card';
+    var front = document.createElement('div');
+    front.className = 'card-face card-front';
+    front.appendChild(createImg(gridAlbumIndices[i]));
+    var back = document.createElement('div');
+    back.className = 'card-face card-back';
+    card.appendChild(front);
+    card.appendChild(back);
+    cell.appendChild(card);
+    return cell;
+  }
+
+  function rebuildGrid() {
+    var prevCols = cols;
+    var prevRows = rows;
+    calcLayout();
+    sizeGrid();
+    if (cols !== prevCols || rows !== prevRows) {
+      var grid = document.getElementById('grid');
+      grid.innerHTML = '';
+      gridAlbumIndices = pickUniqueIndices(total);
+      for (var i = 0; i < total; i++) {
+        grid.appendChild(createCell(i));
+      }
+    }
+  }
+
+  function buildGrid() {
+    var grid = document.getElementById('grid');
+    grid.innerHTML = '';
+    calcLayout();
+    sizeGrid();
+    gridAlbumIndices = pickUniqueIndices(total);
+    for (var i = 0; i < total; i++) {
+      grid.appendChild(createCell(i));
+    }
+    lastFlippedIndex = -1;
+  }
+
+  function flipRandom() {
+    var cellIndex;
+    do {
+      cellIndex = Math.floor(Math.random() * total);
+    } while (cellIndex === lastFlippedIndex);
+    lastFlippedIndex = cellIndex;
+    var cell = document.querySelectorAll('.cell')[cellIndex];
+    var card = cell.querySelector('.card');
+    var isFlipped = card.classList.contains('flipping');
+
+    var usedSet = new Set(gridAlbumIndices);
+    var newAlbumIndex = randomIndex(usedSet);
+    gridAlbumIndices[cellIndex] = newAlbumIndex;
+
+    var targetFace = isFlipped
+      ? card.querySelector('.card-front')
+      : card.querySelector('.card-back');
+
+    targetFace.innerHTML = '';
+    targetFace.appendChild(createImg(newAlbumIndex));
+
+    var newImg = targetFace.querySelector('img');
+    var doFlip = function () {
+      if (isFlipped) {
+        card.classList.remove('flipping');
+      } else {
+        card.classList.add('flipping');
+      }
+    };
+
+    if (newImg.complete) {
+      doFlip();
+    } else {
+      newImg.addEventListener('load', doFlip);
+      newImg.addEventListener('error', doFlip);
+    }
+  }
+
+  function startFlipping() {
+    clearInterval(flipTimer);
+    flipTimer = setInterval(flipRandom, flipInterval * 1000);
+  }
+
+  function loadLocalCategory(category) {
+    var files = LOCAL_CATEGORIES[category];
+    albums = files.map(function (f) {
+      return {
+        url: 'covers/' + encodeURIComponent(category) + '/' + encodeURIComponent(f),
+        name: f.replace(/\.[^.]+$/, '').replace(/_/g, ' ')
+      };
+    });
+    buildGrid();
+    startFlipping();
+  }
+
+  function loadRemoteFeed(feedKey) {
+    fetch(FEEDS[feedKey])
+      .then(function (res) { return res.json(); })
+      .then(function (data) {
+        albums = data.feed.entry.map(function (entry) {
+          return {
+            url: getHighResUrl(entry),
+            name: entry['im:name'].label
+          };
+        });
+        buildGrid();
+        startFlipping();
+      });
+  }
+
+  function loadFeed() {
+    if (LOCAL_CATEGORIES[currentFeed]) {
+      loadLocalCategory(currentFeed);
+    } else {
+      loadRemoteFeed(currentFeed);
+    }
+  }
+
+  // Resize handler
+  var resizeTimer;
+  window.addEventListener('resize', function () {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(rebuildGrid, 150);
+  });
+
+  // Settings modal
+  function toggleModal() {
+    overlay.classList.toggle('open');
+  }
+
+  // Long-press to open settings (mobile)
+  var longPressTimer = null;
+  var longPressFired = false;
+
+  document.getElementById('grid').addEventListener('touchstart', function (e) {
+    longPressFired = false;
+    longPressTimer = setTimeout(function () {
+      longPressFired = true;
+      toggleModal();
+    }, 500);
+  });
+
+  document.getElementById('grid').addEventListener('touchend', function () {
+    clearTimeout(longPressTimer);
+  });
+
+  document.getElementById('grid').addEventListener('touchmove', function () {
+    clearTimeout(longPressTimer);
+  });
+
+  document.addEventListener('keydown', function (e) {
+    if (e.key === '?') {
+      toggleModal();
+    } else if (e.key === 'Escape' && overlay.classList.contains('open')) {
+      overlay.classList.remove('open');
+    }
+  });
+
+  overlay.addEventListener('click', function (e) {
+    if (e.target === overlay) {
+      overlay.classList.remove('open');
+    }
+  });
+
+  feedSelect.addEventListener('change', function () {
+    currentFeed = feedSelect.value;
+    localStorage.setItem('ss_feed', currentFeed);
+    loadFeed();
+  });
+
+  intervalInput.addEventListener('change', function () {
+    var val = parseInt(intervalInput.value, 10);
+    if (val < 1) val = 1;
+    if (val > 10) val = 10;
+    intervalInput.value = val;
+    flipInterval = val;
+    localStorage.setItem('ss_interval', String(val));
+    startFlipping();
+  });
+
+  // Init — load local cover manifest, add categories to dropdown, then start
+  fetch('covers/manifest.json')
+    .then(function (res) { return res.json(); })
+    .then(function (manifest) {
+      LOCAL_CATEGORIES = manifest;
+      var categories = Object.keys(manifest).sort();
+      if (categories.length) {
+        var separator = document.createElement('option');
+        separator.disabled = true;
+        separator.textContent = '── Genres ──';
+        feedSelect.appendChild(separator);
+      }
+      categories.forEach(function (cat) {
+        var opt = document.createElement('option');
+        opt.value = cat;
+        opt.textContent = cat;
+        feedSelect.appendChild(opt);
+      });
+      feedSelect.value = currentFeed;
+      loadFeed();
+    })
+    .catch(function () {
+      loadFeed();
+    });
+})();
+</script>
+</body>
+</html>
