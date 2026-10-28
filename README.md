@@ -1,5 +1,7 @@
 # Album Cover Screensaver
 
+![Album Cover Screensaver](example.gif)
+
 A macOS-style album cover screensaver built as a single-page web application. The screen fills with a grid of album covers that flip with a 3D animation, mimicking the iconic macOS screensaver effect. Covers can be sourced from iTunes Top 100 RSS feeds or from local genre collections.
 
 ## Features
